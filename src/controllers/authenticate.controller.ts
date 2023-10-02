@@ -1,43 +1,58 @@
-import { Controller, Post } from '@nestjs/common'
+import {
+  Body,
+  Controller,
+  HttpCode,
+  HttpStatus,
+  Post,
+  UnauthorizedException,
+  UsePipes,
+} from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
+import { compare } from 'bcryptjs'
+import { ZodValidationPipe } from 'src/pipes/zod-validation-pipe'
+import { PrismaService } from 'src/prisma/prisma.service'
+import { z } from 'zod'
 
-// const createAccountBodySchema = z.object({
-//   name: z.string(),
-//   email: z.string().email(),
-//   password: z.string(),
-// })
+const createAccountBodySchema = z.object({
+  email: z.string().email(),
+  password: z.string(),
+})
 
-// type CreateAccountBodySchema = z.infer<typeof createAccountBodySchema>
+type CreateAccountBodySchema = z.infer<typeof createAccountBodySchema>
 
 @Controller('/sessions')
 export class AuthenticateController {
-  constructor(private jwt: JwtService) {}
+  constructor(
+    private jwt: JwtService,
+    private prisma: PrismaService,
+  ) {}
 
   @Post()
-  // @HttpCode(HttpStatus.OK)
-  async handle() {
-    const token = this.jwt.sign({ sub: 'user-id' })
+  @HttpCode(HttpStatus.CREATED)
+  @UsePipes(new ZodValidationPipe(createAccountBodySchema))
+  async handle(@Body() body: CreateAccountBodySchema) {
+    const { email, password } = createAccountBodySchema.parse(body)
 
-    return {
-      token,
+    const user = await this.prisma.user.findUnique({
+      where: {
+        email,
+      },
+    })
+
+    if (!user) {
+      throw new UnauthorizedException('User credentials do not match.')
     }
 
-    // const { name, email, password } = createAccountBodySchema.parse(body)
-    // const userWithSameEmail = await this.prisma.user.findUnique({
-    //   where: {
-    //     email,
-    //   },
-    // })
-    // if (userWithSameEmail) {
-    //   throw new ConflictException('User with same email already exists.')
-    // }
-    // const hashedPassword = await hash(password, 8)
-    // await this.prisma.user.create({
-    //   data: {
-    //     name,
-    //     email,
-    //     password: hashedPassword,
-    //   },
-    // })
+    const passwordMatches = await compare(password, user.password)
+
+    if (!passwordMatches) {
+      throw new UnauthorizedException('User credentials do not match.')
+    }
+
+    const accessToken = this.jwt.sign({ sub: user.id })
+
+    return {
+      access_token: accessToken,
+    }
   }
 }
